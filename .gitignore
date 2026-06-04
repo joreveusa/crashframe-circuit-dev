@@ -1,0 +1,36 @@
+# CrashFrame Circuit — Dev Tools & Backend
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Secrets & Config (never commit real secrets)
+.env
+*.env
+config.local.json
+
+# Logs
+logs/
+*.log
+
+# Database files (SQLite dev db)
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
