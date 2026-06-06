@@ -168,6 +168,74 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleCommand(const FString
         R->SetBoolField(TEXT("success"), true);
         return R;
     }
+    else if (CommandType == TEXT("add_variable_to_blueprint"))
+    {
+        FString BPPath;
+        if (!Params->TryGetStringField(TEXT("blueprint_path"), BPPath))
+            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_path'"));
+        FString VarName;
+        if (!Params->TryGetStringField(TEXT("variable_name"), VarName))
+            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name'"));
+        FString VarType;
+        if (!Params->TryGetStringField(TEXT("variable_type"), VarType))
+            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_type'"));
+
+        UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BPPath));
+        if (!BP) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BPPath));
+
+        FEdGraphPinType PinType;
+        VarType = VarType.ToLower();
+        if (VarType == TEXT("float"))
+        {
+            PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
+            PinType.PinSubCategory = UEdGraphSchema_K2::PC_Float;
+        }
+        else if (VarType == TEXT("int") || VarType == TEXT("integer"))
+        {
+            PinType.PinCategory = UEdGraphSchema_K2::PC_Int;
+        }
+        else if (VarType == TEXT("bool") || VarType == TEXT("boolean"))
+        {
+            PinType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+        }
+        else if (VarType == TEXT("string"))
+        {
+            PinType.PinCategory = UEdGraphSchema_K2::PC_String;
+        }
+        else if (VarType == TEXT("vector"))
+        {
+            PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+            PinType.PinSubCategoryObject = TBaseStructure<FVector>::Get();
+        }
+        else
+        {
+            PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
+            PinType.PinSubCategory = UEdGraphSchema_K2::PC_Float;
+        }
+
+        bool bAdded = FBlueprintEditorUtils::AddMemberVariable(BP, FName(*VarName), PinType);
+        if (bAdded)
+        {
+            // Set default value if provided
+            FString DefaultValue;
+            if (Params->TryGetStringField(TEXT("default_value"), DefaultValue) && !DefaultValue.IsEmpty())
+            {
+                FBlueprintEditorUtils::SetBlueprintVariableMetaData(BP, FName(*VarName), nullptr, TEXT("DefaultValue"), DefaultValue);
+            }
+            FKismetEditorUtilities::CompileBlueprint(BP);
+            UEditorAssetLibrary::SaveLoadedAsset(BP);
+
+            TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+            R->SetStringField(TEXT("variable"), VarName);
+            R->SetStringField(TEXT("type"), VarType);
+            R->SetBoolField(TEXT("success"), true);
+            return R;
+        }
+        else
+        {
+            return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable already exists or could not be added: %s"), *VarName));
+        }
+    }
     
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType));
 }
