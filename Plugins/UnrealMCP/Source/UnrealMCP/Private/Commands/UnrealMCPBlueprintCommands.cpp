@@ -2,6 +2,7 @@
 #include "Commands/UnrealMCPCommonUtils.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/InheritableComponentHandler.h"
 #include "Factories/BlueprintFactory.h"
 #include "EdGraphSchema_K2.h"
 #include "K2Node_Event.h"
@@ -69,7 +70,6 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleCommand(const FString
     }
     else if (CommandType == TEXT("set_character_mesh"))
     {
-        // Accepts bp_path (full /Game/... path) OR blueprint_name (searches /Game/Blueprints/)
         FString BPPath;
         if (!Params->TryGetStringField(TEXT("bp_path"), BPPath))
         {
@@ -85,6 +85,9 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleCommand(const FString
         UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BPPath));
         if (!BP) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found at: %s"), *BPPath));
 
+        // Ensure compiled so GeneratedClass CDO is fully initialized
+        FKismetEditorUtilities::CompileBlueprint(BP);
+
         USkeletalMesh* Mesh = Cast<USkeletalMesh>(UEditorAssetLibrary::LoadAsset(MeshPath));
         if (!Mesh) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("SkeletalMesh not found: %s"), *MeshPath));
 
@@ -92,7 +95,7 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleCommand(const FString
         Params->TryGetNumberField(TEXT("z_offset"), ZOffset);
         bool bSet = false;
 
-        // Approach 1: Character CDO (works when GeneratedClass is an ACharacter subclass)
+        // Approach 1: Character CDO GetMesh() — works after compile-first above
         if (BP->GeneratedClass && BP->GeneratedClass->IsChildOf(ACharacter::StaticClass()))
         {
             ACharacter* CharCDO = Cast<ACharacter>(BP->GeneratedClass->GetDefaultObject());
@@ -108,7 +111,7 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleCommand(const FString
             }
         }
 
-        // Approach 2: SCS node search (fallback - finds any SkeletalMeshComponent in blueprint)
+        // Approach 2: SCS node search (any SkeletalMeshComponent added to the BP)
         if (!bSet && BP->SimpleConstructionScript)
         {
             for (USCS_Node* Node : BP->SimpleConstructionScript->GetAllNodes())
@@ -126,7 +129,7 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleCommand(const FString
         }
 
         if (!bSet)
-            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("No SkeletalMeshComponent found (tried CDO and SCS nodes)"));
+            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("No SkeletalMeshComponent found (tried CDO + SCS)"));
 
         FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
         FKismetEditorUtilities::CompileBlueprint(BP);
