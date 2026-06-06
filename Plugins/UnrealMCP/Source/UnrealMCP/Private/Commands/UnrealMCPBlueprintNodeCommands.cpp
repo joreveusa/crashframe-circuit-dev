@@ -1,4 +1,4 @@
-﻿#include "Commands/UnrealMCPBlueprintNodeCommands.h"
+#include "Commands/UnrealMCPBlueprintNodeCommands.h"
 #include "Commands/UnrealMCPCommonUtils.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
@@ -15,6 +15,11 @@
 #include "GameFramework/InputSettings.h"
 #include "Camera/CameraActor.h"
 #include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "Kismet/KismetMathLibrary.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Blueprint/UserWidget.h"
+#include "GameFramework/Actor.h"
 #include "EdGraphSchema_K2.h"
 
 // Declare the log category
@@ -444,11 +449,64 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleAddBlueprintFunct
         }
     }
     
-    // If we still haven't found the function, try in the blueprint's class
+    // ── Fallback search chain ─────────────────────────────────────────────
     if (!Function && !FunctionNode)
     {
-        UE_LOG(LogTemp, Display, TEXT("Trying to find function in blueprint class"));
+        // 1. Blueprint's own generated class hierarchy
         Function = Blueprint->GeneratedClass->FindFunctionByName(*FunctionName);
+        UE_LOG(LogTemp, Display, TEXT("BP class search for '%s': %s"), *FunctionName, Function ? TEXT("found") : TEXT("not found"));
+
+        // 2. Direct StaticClass() lookups for well-known functions
+        if (!Function)
+        {
+            // DestroyActor / Destroy → K2_DestroyActor on AActor
+            if (FunctionName.Equals(TEXT("DestroyActor"), ESearchCase::IgnoreCase) ||
+                FunctionName.Equals(TEXT("Destroy"), ESearchCase::IgnoreCase) ||
+                FunctionName.Equals(TEXT("K2_DestroyActor"), ESearchCase::IgnoreCase))
+            {
+                Function = AActor::StaticClass()->FindFunctionByName(TEXT("K2_DestroyActor"));
+                UE_LOG(LogTemp, Display, TEXT("K2_DestroyActor on AActor: %s"), Function ? TEXT("found") : TEXT("not found"));
+            }
+            // ApplyDamage → UGameplayStatics
+            else if (FunctionName.Equals(TEXT("ApplyDamage"), ESearchCase::IgnoreCase))
+            {
+                Function = UGameplayStatics::StaticClass()->FindFunctionByName(TEXT("ApplyDamage"));
+                UE_LOG(LogTemp, Display, TEXT("ApplyDamage on UGameplayStatics: %s"), Function ? TEXT("found") : TEXT("not found"));
+            }
+            // PrintString → UKismetSystemLibrary
+            else if (FunctionName.Equals(TEXT("PrintString"), ESearchCase::IgnoreCase))
+            {
+                Function = UKismetSystemLibrary::StaticClass()->FindFunctionByName(TEXT("PrintString"));
+            }
+            // AddToViewport → UUserWidget
+            else if (FunctionName.Equals(TEXT("AddToViewport"), ESearchCase::IgnoreCase))
+            {
+                Function = UUserWidget::StaticClass()->FindFunctionByName(TEXT("AddToViewport"));
+                UE_LOG(LogTemp, Display, TEXT("AddToViewport on UUserWidget: %s"), Function ? TEXT("found") : TEXT("not found"));
+            }
+        }
+
+        // 3. Scan common library classes (catch-all)
+        if (!Function)
+        {
+            TArray<UClass*> LibClasses = {
+                UGameplayStatics::StaticClass(),
+                UKismetSystemLibrary::StaticClass(),
+                UKismetMathLibrary::StaticClass(),
+                UWidgetBlueprintLibrary::StaticClass(),
+                UUserWidget::StaticClass(),
+                AActor::StaticClass()
+            };
+            for (UClass* LibClass : LibClasses)
+            {
+                Function = LibClass->FindFunctionByName(*FunctionName);
+                if (Function)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Found '%s' in '%s'"), *FunctionName, *LibClass->GetName());
+                    break;
+                }
+            }
+        }
     }
     
     // Create the function call node if we found the function
@@ -461,6 +519,7 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleAddBlueprintFunct
     {
         return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Function not found: %s in target %s"), *FunctionName, Target.IsEmpty() ? TEXT("Blueprint") : *Target));
     }
+
 
     // Set parameters if provided
     if (Params->HasField(TEXT("params")))

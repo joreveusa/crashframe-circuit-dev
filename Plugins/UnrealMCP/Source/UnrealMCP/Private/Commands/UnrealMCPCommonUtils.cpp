@@ -153,8 +153,34 @@ UBlueprint* FUnrealMCPCommonUtils::FindBlueprint(const FString& BlueprintName)
 
 UBlueprint* FUnrealMCPCommonUtils::FindBlueprintByName(const FString& BlueprintName)
 {
-    FString AssetPath = TEXT("/Game/Blueprints/") + BlueprintName;
-    return LoadObject<UBlueprint>(nullptr, *AssetPath);
+    // 1. Fast path: direct full-path load (if caller passed a path)
+    if (BlueprintName.StartsWith(TEXT("/")))
+    {
+        UBlueprint* Direct = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BlueprintName));
+        if (Direct) return Direct;
+    }
+
+    // 2. Legacy hardcoded path
+    FString LegacyPath = TEXT("/Game/Blueprints/") + BlueprintName;
+    UBlueprint* Legacy = LoadObject<UBlueprint>(nullptr, *LegacyPath);
+    if (Legacy) return Legacy;
+
+    // 3. Asset registry search across entire project
+    FAssetRegistryModule& ARM = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    TArray<FAssetData> Assets;
+    FARFilter Filter;
+    Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+    Filter.bRecursiveClasses = true;
+    ARM.Get().GetAssets(Filter, Assets);
+
+    for (const FAssetData& Asset : Assets)
+    {
+        if (Asset.AssetName.ToString().Equals(BlueprintName, ESearchCase::IgnoreCase))
+        {
+            return Cast<UBlueprint>(Asset.GetAsset());
+        }
+    }
+    return nullptr;
 }
 
 UEdGraph* FUnrealMCPCommonUtils::FindOrCreateEventGraph(UBlueprint* Blueprint)
