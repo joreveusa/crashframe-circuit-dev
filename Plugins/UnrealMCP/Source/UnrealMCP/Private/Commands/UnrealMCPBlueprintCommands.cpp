@@ -1,4 +1,4 @@
-﻿#include "Commands/UnrealMCPBlueprintCommands.h"
+#include "Commands/UnrealMCPBlueprintCommands.h"
 #include "Commands/UnrealMCPCommonUtils.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
@@ -20,6 +20,10 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/GameModeBase.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
 
 FUnrealMCPBlueprintCommands::FUnrealMCPBlueprintCommands()
 {
@@ -62,6 +66,104 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleCommand(const FString
     else if (CommandType == TEXT("set_pawn_properties"))
     {
         return HandleSetPawnProperties(Params);
+    }
+    else if (CommandType == TEXT("set_character_mesh"))
+    {
+        // Accepts bp_path (full /Game/... path) OR blueprint_name (searches /Game/Blueprints/)
+        FString BPPath;
+        if (!Params->TryGetStringField(TEXT("bp_path"), BPPath))
+        {
+            FString BPName;
+            if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName))
+                return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'bp_path' or 'blueprint_name'"));
+            BPPath = TEXT("/Game/Blueprints/") + BPName;
+        }
+        FString MeshPath;
+        if (!Params->TryGetStringField(TEXT("skeletal_mesh"), MeshPath))
+            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'skeletal_mesh'"));
+
+        UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BPPath));
+        if (!BP) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found at: %s"), *BPPath));
+
+        USkeletalMesh* Mesh = Cast<USkeletalMesh>(UEditorAssetLibrary::LoadAsset(MeshPath));
+        if (!Mesh) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("SkeletalMesh not found: %s"), *MeshPath));
+
+        double ZOffset = -90.0;
+        Params->TryGetNumberField(TEXT("z_offset"), ZOffset);
+        bool bSet = false;
+
+        // Approach 1: Character CDO (works when GeneratedClass is an ACharacter subclass)
+        if (BP->GeneratedClass && BP->GeneratedClass->IsChildOf(ACharacter::StaticClass()))
+        {
+            ACharacter* CharCDO = Cast<ACharacter>(BP->GeneratedClass->GetDefaultObject());
+            if (CharCDO)
+            {
+                USkeletalMeshComponent* MeshComp = CharCDO->GetMesh();
+                if (MeshComp)
+                {
+                    MeshComp->SetSkeletalMesh(Mesh);
+                    MeshComp->SetRelativeLocation(FVector(0.0, 0.0, ZOffset));
+                    bSet = true;
+                }
+            }
+        }
+
+        // Approach 2: SCS node search (fallback - finds any SkeletalMeshComponent in blueprint)
+        if (!bSet && BP->SimpleConstructionScript)
+        {
+            for (USCS_Node* Node : BP->SimpleConstructionScript->GetAllNodes())
+            {
+                if (!Node) continue;
+                USkeletalMeshComponent* SkelComp = Cast<USkeletalMeshComponent>(Node->ComponentTemplate);
+                if (SkelComp)
+                {
+                    SkelComp->SetSkeletalMesh(Mesh);
+                    SkelComp->SetRelativeLocation(FVector(0.0, 0.0, ZOffset));
+                    bSet = true;
+                    break;
+                }
+            }
+        }
+
+        if (!bSet)
+            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("No SkeletalMeshComponent found (tried CDO and SCS nodes)"));
+
+        FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
+        FKismetEditorUtilities::CompileBlueprint(BP);
+
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        R->SetStringField(TEXT("mesh"), MeshPath);
+        R->SetNumberField(TEXT("z_offset"), ZOffset);
+        R->SetBoolField(TEXT("success"), true);
+        return R;
+    }
+    else if (CommandType == TEXT("set_gamemode_pawn"))
+    {
+        // set_gamemode_pawn: gamemode_path (full /Game/... path), pawn_path (full /Game/... path)
+        FString GMPath, PawnPath;
+        if (!Params->TryGetStringField(TEXT("gamemode_path"), GMPath))
+            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'gamemode_path'"));
+        if (!Params->TryGetStringField(TEXT("pawn_path"), PawnPath))
+            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'pawn_path'"));
+
+        UBlueprint* GMBP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(GMPath));
+        if (!GMBP) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("GameMode BP not found at: %s"), *GMPath));
+
+        UBlueprint* PawnBP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(PawnPath));
+        if (!PawnBP) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Pawn BP not found at: %s"), *PawnPath));
+
+        AGameModeBase* GMCDO = Cast<AGameModeBase>(GMBP->GeneratedClass->GetDefaultObject());
+        if (!GMCDO) return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Blueprint is not a GameModeBase"));
+
+        GMCDO->DefaultPawnClass = PawnBP->GeneratedClass;
+        FBlueprintEditorUtils::MarkBlueprintAsModified(GMBP);
+        FKismetEditorUtilities::CompileBlueprint(GMBP);
+
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        R->SetStringField(TEXT("gamemode_path"), GMPath);
+        R->SetStringField(TEXT("pawn_path"), PawnPath);
+        R->SetBoolField(TEXT("success"), true);
+        return R;
     }
     
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType));

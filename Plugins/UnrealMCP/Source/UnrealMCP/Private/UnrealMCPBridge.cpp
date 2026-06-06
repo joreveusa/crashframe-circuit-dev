@@ -234,7 +234,8 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("set_actor_property") ||
                      CommandType == TEXT("spawn_blueprint_actor") ||
                      CommandType == TEXT("focus_viewport") || 
-                     CommandType == TEXT("take_screenshot"))
+                     CommandType == TEXT("take_screenshot") ||
+                     CommandType == TEXT("save_all"))
             {
                 ResultJson = EditorCommands->HandleCommand(CommandType, Params);
             }
@@ -246,7 +247,10 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("compile_blueprint") || 
                      CommandType == TEXT("set_blueprint_property") || 
                      CommandType == TEXT("set_static_mesh_properties") ||
-                     CommandType == TEXT("set_pawn_properties"))
+                     CommandType == TEXT("set_pawn_properties") ||
+                     CommandType == TEXT("set_character_mesh") ||
+                     CommandType == TEXT("set_gamemode_pawn") ||
+                     CommandType == TEXT("add_variable_to_blueprint"))
             {
                 ResultJson = BlueprintCommands->HandleCommand(CommandType, Params);
             }
