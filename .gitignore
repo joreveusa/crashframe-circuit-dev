@@ -1,4 +1,4 @@
-﻿# Unreal Engine
+# Unreal Engine
 Binaries/
 Build/
 DerivedDataCache/
@@ -16,3 +16,5 @@ Saved/
 
 # Keep plugin binaries (needed to run without recompile)
 !Plugins/UnrealMCP/Binaries/
+# But exclude large debug symbols
+Plugins/UnrealMCP/Binaries/**/*.pdb
