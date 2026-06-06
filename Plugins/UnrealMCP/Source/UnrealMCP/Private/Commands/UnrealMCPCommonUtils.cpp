@@ -295,6 +295,7 @@ UK2Node_VariableGet* FUnrealMCPCommonUtils::CreateVariableGetNode(UEdGraph* Grap
         VariableGetNode->NodePosX = Position.X;
         VariableGetNode->NodePosY = Position.Y;
         Graph->AddNode(VariableGetNode, true);
+        VariableGetNode->CreateNewGuid();
         VariableGetNode->PostPlacedNewNode();
         VariableGetNode->AllocateDefaultPins();
         
@@ -322,6 +323,7 @@ UK2Node_VariableSet* FUnrealMCPCommonUtils::CreateVariableSetNode(UEdGraph* Grap
         VariableSetNode->NodePosX = Position.X;
         VariableSetNode->NodePosY = Position.Y;
         Graph->AddNode(VariableSetNode, true);
+        VariableSetNode->CreateNewGuid();
         VariableSetNode->PostPlacedNewNode();
         VariableSetNode->AllocateDefaultPins();
         

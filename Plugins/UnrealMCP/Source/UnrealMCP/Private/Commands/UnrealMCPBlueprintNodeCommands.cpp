@@ -8,6 +8,8 @@
 #include "K2Node_Event.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_VariableGet.h"
+#include "K2Node_VariableSet.h"
+#include "K2Node_IfThenElse.h"
 #include "K2Node_InputAction.h"
 #include "K2Node_Self.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -15,6 +17,7 @@
 #include "GameFramework/InputSettings.h"
 #include "Camera/CameraActor.h"
 #include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
@@ -62,6 +65,18 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleCommand(const FSt
     else if (CommandType == TEXT("find_blueprint_nodes"))
     {
         return HandleFindBlueprintNodes(Params);
+    }
+    else if (CommandType == TEXT("add_blueprint_variable_get"))
+    {
+        return HandleAddBlueprintVariableGet(Params);
+    }
+    else if (CommandType == TEXT("add_blueprint_variable_set"))
+    {
+        return HandleAddBlueprintVariableSet(Params);
+    }
+    else if (CommandType == TEXT("add_blueprint_branch_node"))
+    {
+        return HandleAddBlueprintBranchNode(Params);
     }
     
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint node command: %s"), *CommandType));
@@ -483,6 +498,35 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleAddBlueprintFunct
             {
                 Function = UUserWidget::StaticClass()->FindFunctionByName(TEXT("AddToViewport"));
                 UE_LOG(LogTemp, Display, TEXT("AddToViewport on UUserWidget: %s"), Function ? TEXT("found") : TEXT("not found"));
+            }
+            // Float/Double math → UKismetMathLibrary (UE5 uses DoubleDouble after LWC migration)
+            else if (FunctionName.StartsWith(TEXT("Subtract")) || FunctionName.Equals(TEXT("Subtract"), ESearchCase::IgnoreCase))
+            {
+                UClass* ML = UKismetMathLibrary::StaticClass();
+                Function = ML->FindFunctionByName(TEXT("Subtract_DoubleDouble"));
+                if (!Function) Function = ML->FindFunctionByName(TEXT("Subtract_FloatFloat"));
+                UE_LOG(LogTemp, Display, TEXT("Subtract: %s"), Function ? TEXT("found") : TEXT("not found"));
+            }
+            else if (FunctionName.StartsWith(TEXT("LessEqual")) || FunctionName.Equals(TEXT("LessEqual"), ESearchCase::IgnoreCase))
+            {
+                UClass* ML = UKismetMathLibrary::StaticClass();
+                Function = ML->FindFunctionByName(TEXT("LessEqual_DoubleDouble"));
+                if (!Function) Function = ML->FindFunctionByName(TEXT("LessEqual_FloatFloat"));
+                UE_LOG(LogTemp, Display, TEXT("LessEqual: %s"), Function ? TEXT("found") : TEXT("not found"));
+            }
+            else if (FunctionName.StartsWith(TEXT("Add_Float")) || FunctionName.StartsWith(TEXT("Add_Double")) ||
+                     FunctionName.Equals(TEXT("Add"), ESearchCase::IgnoreCase))
+            {
+                UClass* ML = UKismetMathLibrary::StaticClass();
+                Function = ML->FindFunctionByName(TEXT("Add_DoubleDouble"));
+                if (!Function) Function = ML->FindFunctionByName(TEXT("Add_FloatFloat"));
+            }
+            else if (FunctionName.StartsWith(TEXT("Multiply_Float")) || FunctionName.StartsWith(TEXT("Multiply_Double")) ||
+                     FunctionName.Equals(TEXT("Multiply"), ESearchCase::IgnoreCase))
+            {
+                UClass* ML = UKismetMathLibrary::StaticClass();
+                Function = ML->FindFunctionByName(TEXT("Multiply_DoubleDouble"));
+                if (!Function) Function = ML->FindFunctionByName(TEXT("Multiply_FloatFloat"));
             }
         }
 
@@ -980,4 +1024,96 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleFindBlueprintNode
     ResultObj->SetArrayField(TEXT("node_guids"), NodeGuidArray);
     
     return ResultObj;
-} 
+}
+
+// ── Variable Get ──────────────────────────────────────────────────────────────
+TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleAddBlueprintVariableGet(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name'"));
+
+    FVector2D Pos(0, 0);
+    if (Params->HasField(TEXT("node_position")))
+        Pos = FUnrealMCPCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+
+    UBlueprint* BP = FUnrealMCPCommonUtils::FindBlueprint(BlueprintName);
+    if (!BP) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+
+    UEdGraph* Graph = FUnrealMCPCommonUtils::FindOrCreateEventGraph(BP);
+    if (!Graph) return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("No event graph"));
+
+    UK2Node_VariableGet* Node = FUnrealMCPCommonUtils::CreateVariableGetNode(Graph, BP, VariableName, Pos);
+    if (!Node) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable not found: %s"), *VariableName));
+
+    FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("node_id"), Node->NodeGuid.ToString());
+    return R;
+}
+
+// ── Variable Set ──────────────────────────────────────────────────────────────
+TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleAddBlueprintVariableSet(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name'"));
+
+    FVector2D Pos(0, 0);
+    if (Params->HasField(TEXT("node_position")))
+        Pos = FUnrealMCPCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+
+    UBlueprint* BP = FUnrealMCPCommonUtils::FindBlueprint(BlueprintName);
+    if (!BP) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+
+    UEdGraph* Graph = FUnrealMCPCommonUtils::FindOrCreateEventGraph(BP);
+    if (!Graph) return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("No event graph"));
+
+    UK2Node_VariableSet* Node = FUnrealMCPCommonUtils::CreateVariableSetNode(Graph, BP, VariableName, Pos);
+    if (!Node) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable not found: %s"), *VariableName));
+
+    FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("node_id"), Node->NodeGuid.ToString());
+    return R;
+}
+
+// ── Branch (IfThenElse) ───────────────────────────────────────────────────────
+TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleAddBlueprintBranchNode(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+    FVector2D Pos(0, 0);
+    if (Params->HasField(TEXT("node_position")))
+        Pos = FUnrealMCPCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+
+    UBlueprint* BP = FUnrealMCPCommonUtils::FindBlueprint(BlueprintName);
+    if (!BP) return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+
+    UEdGraph* Graph = FUnrealMCPCommonUtils::FindOrCreateEventGraph(BP);
+    if (!Graph) return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("No event graph"));
+
+    UK2Node_IfThenElse* Node = NewObject<UK2Node_IfThenElse>(Graph);
+    Node->NodePosX = (int32)Pos.X;
+    Node->NodePosY = (int32)Pos.Y;
+    Graph->AddNode(Node, true);
+    Node->CreateNewGuid();
+    Node->PostPlacedNewNode();
+    Node->AllocateDefaultPins();
+
+    FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("node_id"), Node->NodeGuid.ToString());
+    return R;
+}
