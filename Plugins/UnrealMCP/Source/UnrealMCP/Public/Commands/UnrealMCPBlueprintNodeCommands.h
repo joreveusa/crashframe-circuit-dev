@@ -27,4 +27,5 @@ private:
     TSharedPtr<FJsonObject> HandleAddBlueprintVariableGet(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddBlueprintVariableSet(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddBlueprintBranchNode(const TSharedPtr<FJsonObject>& Params);
-}; 
+    TSharedPtr<FJsonObject> HandleSetBlueprintPinDefaultObject(const TSharedPtr<FJsonObject>& Params);
+};
